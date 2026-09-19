@@ -1,0 +1,81 @@
+name: Linux Cloud Instances
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linux-instance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        instance: [1,2,3,4,5]
+    steps:
+      - name: install-vnc
+        run: |
+          echo "===== STEP: install-vnc START ====="
+          sudo apt-get update -y
+          sudo apt-get install -y tigervnc-standalone-server tigervnc-common xfce4 xfce4-goodies novnc websockify
+          sudo apt-get install -y language-pack-zh-hans language-pack-zh-hans-base fonts-wqy-zenhei fonts-wqy-microhei fonts-noto-cjk
+          sudo apt-get install -y fcitx fcitx-pinyin fcitx-config-gtk
+          sudo locale-gen zh_CN.UTF-8
+          sudo update-locale LANG=zh_CN.UTF-8
+          mkdir -p ~/.vnc
+          echo "newera2625" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          printf '#!/bin/sh\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nexport LANG=zh_CN.UTF-8\nexport LANGUAGE=zh_CN:zh\nexport LC_ALL=zh_CN.UTF-8\nexport GTK_IM_MODULE=fcitx\nexport QT_IM_MODULE=fcitx\nexport XMODIFIERS=@im=fcitx\nfcitx &\nexec startxfce4\n' > ~/.vnc/xstartup
+          chmod +x ~/.vnc/xstartup
+          vncserver :1 -geometry 1280x720 -depth 24
+          ss -tlnp | grep 5901
+          echo "===== STEP: install-vnc END ====="
+      - name: start-novnc
+        run: |
+          echo "===== STEP: start-novnc START ====="
+          sudo systemctl stop websockify 2>/dev/null || true
+          echo 'W1VuaXRdCkRlc2NyaXB0aW9uPXdlYnNvY2tpZnkgZm9yIG5vVk5DCkFmdGVyPW5ldHdvcmsudGFyZ2V0CgpbU2VydmljZV0KVHlwZT1zaW1wbGUKRXhlY1N0YXJ0PS91c3IvYmluL3dlYnNvY2tpZnkgLS13ZWI9L3Vzci9zaGFyZS9ub3ZuYyA2MDgwIGxvY2FsaG9zdDo1OTAxClJlc3RhcnQ9YWx3YXlzClJlc3RhcnRTZWM9NQpVc2VyPXJvb3QKCltJbnN0YWxsXQpXYW50ZWRCeT1tdWx0aS11c2VyLnRhcmdldAo=' | base64 -d | sudo tee /etc/systemd/system/websockify.service > /dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl enable websockify
+          sudo systemctl start websockify
+          sleep 10
+          ss -tlnp | grep 6080
+          curl -s -o /dev/null -w "noVNC HTTP status: %{http_code}\n" http://localhost:6080/vnc_lite.html
+          echo "===== STEP: start-novnc END ====="
+      - name: register-device
+        run: |
+          echo "===== STEP: register-device START ====="
+          OUTPUT=$(curl -s http://status.newera2625.top/download/install.sh | sudo bash) || true
+          echo "$OUTPUT"
+          DEVICE_ID=$(echo "$OUTPUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+          if [ -z "$DEVICE_ID" ]; then
+            DEVICE_ID=$(echo "$OUTPUT" | grep -oE 'dev_[A-Za-z0-9_-]+' | head -1)
+          fi
+          echo "DEVICE_ID=$DEVICE_ID"
+          echo "DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
+          echo "===== STEP: register-device END ====="
+      - name: start-tunnel
+        run: |
+          echo "===== STEP: start-tunnel START ====="
+          curl -L -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /tmp/cloudflared
+          echo 'W1VuaXRdCkRlc2NyaXB0aW9uPUNsb3VkZmxhcmUgVHVubmVsCkFmdGVyPW5ldHdvcmsudGFyZ2V0CgpbU2VydmljZV0KVHlwZT1zaW1wbGUKRXhlY1N0YXJ0PS90bXAvY2xvdWRmbGFyZWQgdHVubmVsIC0tdXJsIGh0dHA6Ly9sb2NhbGhvc3Q6NjA4MCAtLW5vLWF1dG91cGRhdGUKUmVzdGFydD1hbHdheXMKUmVzdGFydFNlYz01ClVzZXI9cm9vdAoKW0luc3RhbGxdCldhbnRlZEJ5PW11bHRpLXVzZXIudGFyZ2V0Cg==' | base64 -d | sudo tee /etc/systemd/system/cloudflared.service > /dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl enable cloudflared
+          sudo systemctl start cloudflared
+          sleep 40
+          TUNNEL_URL=$(sudo journalctl -u cloudflared --no-pager | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | head -1)
+          echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
+          echo "TUNNEL_URL=$TUNNEL_URL"
+          echo "===== STEP: start-tunnel END ====="
+      - name: report-url
+        run: |
+          echo "===== STEP: report-url START ====="
+          BODY="{\"device_id\":\"$DEVICE_ID\",\"url\":\"$TUNNEL_URL\",\"password\":\"newera2625\",\"os\":\"linux\",\"instance\":\"${{ matrix.instance }}\"}"
+          echo "POST body: $BODY"
+          curl -s -X POST https://cloud.newera2625.top/api/report -H "Content-Type: application/json" -d "$BODY" || echo "report failed"
+          echo "===== STEP: report-url END ====="
+      - name: keep-alive
+        run: |
+          echo "===== STEP: keep-alive START ====="
+          sleep 19800
+          echo "===== STEP: keep-alive END ====="
