@@ -77,5 +77,5 @@ jobs:
       - name: keep-alive
         run: |
           echo "===== STEP: keep-alive START ====="
-          sleep 19800
+          sleep 18000
           echo "===== STEP: keep-alive END ====="
