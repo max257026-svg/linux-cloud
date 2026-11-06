@@ -63,15 +63,12 @@ jobs:
           PORT=$((24000 + ${{ matrix.instance }}))
           SSH_OPTS="-i $HOME/.ssh/tunnel_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=15"
           DEADLINE=$((SECONDS + 18000))
-          REPORTED=0
           LAST_REPORT=0
 
           report_instance() {
-            if [ "$REPORTED" = "1" ]; then return 0; fi
             local BODY
             BODY="{\"device_id\":\"${DEVICE_ID}\",\"url\":\"wss://wss.newera2625.top/relay/linux/${{ matrix.instance }}\",\"password\":\"newera2625\",\"os\":\"linux\",\"instance\":\"${{ matrix.instance }}\"}"
             if curl -fsS -X POST https://cloud.newera2625.top/api/report -H "Content-Type: application/json" -d "$BODY"; then
-              REPORTED=1
               echo "reported instance ${{ matrix.instance }}"
             fi
           }
@@ -90,7 +87,7 @@ jobs:
                   kill $SSH_PID 2>/dev/null || true
                   break
                 fi
-                if [ "$REPORTED" != "1" ] && [ $((SECONDS - LAST_REPORT)) -ge 30 ]; then
+                if [ $((SECONDS - LAST_REPORT)) -ge 30 ]; then
                   report_instance
                   LAST_REPORT=$SECONDS
                 fi
