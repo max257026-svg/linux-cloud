@@ -53,29 +53,53 @@ jobs:
           echo "DEVICE_ID=$DEVICE_ID"
           echo "DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
           echo "===== STEP: register-device END ====="
-      - name: start-tunnel
+      - name: start-tunnel-and-keepalive
         run: |
           echo "===== STEP: start-tunnel START ====="
-          curl -L -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x /tmp/cloudflared
-          echo 'W1VuaXRdCkRlc2NyaXB0aW9uPUNsb3VkZmxhcmUgVHVubmVsCkFmdGVyPW5ldHdvcmsudGFyZ2V0CgpbU2VydmljZV0KVHlwZT1zaW1wbGUKRXhlY1N0YXJ0PS90bXAvY2xvdWRmbGFyZWQgdHVubmVsIC0tdXJsIGh0dHA6Ly9sb2NhbGhvc3Q6NjA4MCAtLW5vLWF1dG91cGRhdGUKUmVzdGFydD1hbHdheXMKUmVzdGFydFNlYz01ClVzZXI9cm9vdAoKW0luc3RhbGxdCldhbnRlZEJ5PW11bHRpLXVzZXIudGFyZ2V0Cg==' | base64 -d | sudo tee /etc/systemd/system/cloudflared.service > /dev/null
-          sudo systemctl daemon-reload
-          sudo systemctl enable cloudflared
-          sudo systemctl start cloudflared
-          sleep 40
-          TUNNEL_URL=$(sudo journalctl -u cloudflared --no-pager | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | head -1)
-          echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
-          echo "TUNNEL_URL=$TUNNEL_URL"
+          if [ -z "$DEVICE_ID" ]; then echo "DEVICE_ID is empty"; exit 1; fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.TUNNEL_SSH_KEY }}" > ~/.ssh/tunnel_key
+          chmod 600 ~/.ssh/tunnel_key
+          PORT=$((24000 + ${{ matrix.instance }}))
+          SSH_OPTS="-i $HOME/.ssh/tunnel_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=15"
+          DEADLINE=$((SECONDS + 18000))
+          REPORTED=0
+          LAST_REPORT=0
+
+          report_instance() {
+            if [ "$REPORTED" = "1" ]; then return 0; fi
+            local BODY
+            BODY="{\"device_id\":\"${DEVICE_ID}\",\"url\":\"wss://wss.newera2625.top/relay/linux/${{ matrix.instance }}\",\"password\":\"newera2625\",\"os\":\"linux\",\"instance\":\"${{ matrix.instance }}\"}"
+            if curl -fsS -X POST https://cloud.newera2625.top/api/report -H "Content-Type: application/json" -d "$BODY"; then
+              REPORTED=1
+              echo "reported instance ${{ matrix.instance }}"
+            fi
+          }
+
+          while [ $SECONDS -lt $DEADLINE ]; do
+            ssh $SSH_OPTS -N -R 127.0.0.1:${PORT}:127.0.0.1:6080 tunnel@207.57.134.183 -p 46318 &
+            SSH_PID=$!
+            sleep 8
+            if kill -0 $SSH_PID 2>/dev/null; then
+              echo "tunnel up: HK 127.0.0.1:${PORT} -> runner 6080"
+              report_instance
+              LAST_REPORT=$SECONDS
+              while kill -0 $SSH_PID 2>/dev/null; do
+                sleep 20
+                if [ $SECONDS -ge $DEADLINE ]; then
+                  kill $SSH_PID 2>/dev/null || true
+                  break
+                fi
+                if [ "$REPORTED" != "1" ] && [ $((SECONDS - LAST_REPORT)) -ge 30 ]; then
+                  report_instance
+                  LAST_REPORT=$SECONDS
+                fi
+              done
+            else
+              echo "tunnel failed to start; retrying"
+            fi
+            wait $SSH_PID 2>/dev/null || true
+            [ $SECONDS -ge $DEADLINE ] && break
+            sleep 5
+          done
           echo "===== STEP: start-tunnel END ====="
-      - name: report-url
-        run: |
-          echo "===== STEP: report-url START ====="
-          BODY="{\"device_id\":\"$DEVICE_ID\",\"url\":\"$TUNNEL_URL\",\"password\":\"newera2625\",\"os\":\"linux\",\"instance\":\"${{ matrix.instance }}\"}"
-          echo "POST body: $BODY"
-          curl -s -X POST https://cloud.newera2625.top/api/report -H "Content-Type: application/json" -d "$BODY" || echo "report failed"
-          echo "===== STEP: report-url END ====="
-      - name: keep-alive
-        run: |
-          echo "===== STEP: keep-alive START ====="
-          sleep 18000
-          echo "===== STEP: keep-alive END ====="
