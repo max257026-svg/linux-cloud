@@ -27,6 +27,8 @@ jobs:
           printf '#!/bin/sh\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nexport LANG=zh_CN.UTF-8\nexport LANGUAGE=zh_CN:zh\nexport LC_ALL=zh_CN.UTF-8\nexport GTK_IM_MODULE=fcitx\nexport QT_IM_MODULE=fcitx\nexport XMODIFIERS=@im=fcitx\nfcitx &\nexec startxfce4\n' > ~/.vnc/xstartup
           chmod +x ~/.vnc/xstartup
           vncserver :1 -geometry 1280x720 -depth 24
+          sleep 2
+          DISPLAY=:1 nohup vncconfig -nowin >/dev/null 2>&1 &
           ss -tlnp | grep 5901
           echo "===== STEP: install-vnc END ====="
       - name: start-novnc
